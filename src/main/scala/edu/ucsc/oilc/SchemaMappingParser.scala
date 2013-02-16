@@ -41,23 +41,53 @@ import scala.util.parsing.combinator._
  */
 class SchemaMappingParser extends JavaTokenParsers {
 
-  def schemaMapping = FOREACH ~ WHERE ~ EXISTS ~ WHERE ~ WITH
+  def schemaMapping =
+    foreach ~ where ~ exists ~ where ~ withh ^^ {
+      case f ~ fw ~ e ~ ew ~ w => new QueryGraph(f, fw, e, ew, w)
+    }
 
-  def FOREACH = "foreach" ~> repsep(relationVariable, ",")
+  def foreach =
+    "foreach" ~> repsep(relationVariable, ",") ^^ { (relVars: List[RelationVariable]) => relVars }
 
-  def WHERE = "where" ~> repsep(equality, "and")
+  def where =
+    "where" ~> repsep(equality, "and") ^^ { (eqs: List[Equality]) => eqs }
 
-  def EXISTS = "exists" ~> repsep(relationVariable, ",")
+  def exists =
+    "exists" ~> repsep(relationVariable, ",") ^^ { (relVars: List[RelationVariable]) => relVars }
 
-  def WITH = "with" ~> repsep(equality, "and")
+  def withh =
+    "with" ~> repsep(equality, "and") ^^ { (eqs: List[Equality]) => eqs }
 
   //===========
 
-  def equality = qualifiedId <~ "=" ~> qualifiedId
+  def equality =
+    qualifiedId ~ "=" ~ qualifiedId ^^ { case q1 ~ _ ~ q2 => new Equality(q1, q2) }
 
-  def relationVariable = id <~ "in" ~> qualifiedId
+  def relationVariable =
+    id ~ "in" ~ qualifiedId ^^ { case i ~ _ ~ q => new RelationVariable(i, q) }
 
-  def qualifiedId = id <~ "." ~> id | id
+  def qualifiedId =
+    id ~ "." ~ id ^^ { case c ~ _ ~ o => new Identifier(o, c) } |
+    id            ^^ { case o => new Identifier(o) }
 
-  def id = ident
+  def id =
+    ident ^^ { case s => s }
+}
+
+class Identifier(val obj: String, val container: String) {
+  def this(obj: String) = this(obj, "")
+}
+
+class Equality(val id1: Identifier, val id2: Identifier) {
+}
+
+class RelationVariable(val id: String, val relation: Identifier) {
+}
+
+class QueryGraph(
+    val foreach: List[RelationVariable],
+    val fwhere: List[Equality],
+    val exists: List[RelationVariable],
+    val ewhere: List[Equality],
+    val withh: List[Equality]) {
 }

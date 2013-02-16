@@ -4,7 +4,7 @@ import org.scalatest.FunSuite
 
 class ExampleSuite extends FunSuite {
 
-  test("high-level rule") {
+  test("basic parsing test") {
     val p = new SchemaMappingParser
     val spec =
       """
@@ -17,9 +17,20 @@ class ExampleSuite extends FunSuite {
 
     p.parseAll(p.schemaMapping, spec) match {
       case p.Success(r,_) =>
-        assert(r.toString == "((((List(c, g)~List(c))~List(o, f, fn))~List(f))~List(c, g, g))")
+        assert(r.foreach.size == 2)
+        assert(r.fwhere.size == 1)
+        assert(r.exists.size == 3)
+        assert(r.ewhere.size == 1)
+        assert(r.withh.size == 3)
+
+        assert(r.foreach(0).id == "c")
+        assert(r.foreach(0).relation.obj == "companies")
+        assert(r.foreach(1).id == "g")
+        assert(r.foreach(1).relation.obj == "grants")
+        //...
       case x =>
         fail(x.toString)
     }
   }
+
 }
