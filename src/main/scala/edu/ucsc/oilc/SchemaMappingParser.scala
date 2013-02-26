@@ -28,6 +28,7 @@ import scala.util.parsing.combinator._
  * }}}
  *
  * In the above:
+ *  - all clauses are required (this might change in the future)
  *  - variables in `FOREACH` and `EXISTS` clauses correspond to relational symbols, i.e. a variable
  *    "points" to a relation members (a.k.a. columns from tables).
  *  - `FOREACH` clause refers to relations in the source schema
@@ -51,18 +52,21 @@ class SchemaMappingParser extends JavaTokenParsers {
 
   def schemaMapping =
     foreach ~ where ~ exists ~ where ~ withh ^^ {
-      validate(f, fw, e, ew, w)
-      case f ~ fw ~ e ~ ew ~ w => new SchemaMapping(f, fw, e, ew, w)
+      case f ~ fw ~ e ~ ew ~ w => validate(f, fw, e, ew, w)
     }
 
   def foreach =
-    "foreach" ~> repsep(relationVariable, ",") ^^ { (relVars: List[RelationVariable]) => relVars }
+    "foreach" ~> repsep(dbObjectVariable, ",") ^^ {
+      (relVars: List[DBObjectVariable]) => relVars map { relVar => (relVar.id, relVar) } toMap
+    }
 
   def where =
     "where" ~> repsep(equality, "and") ^^ { (eqs: List[Equality]) => eqs }
 
   def exists =
-    "exists" ~> repsep(relationVariable, ",") ^^ { (relVars: List[RelationVariable]) => relVars }
+    "exists" ~> repsep(dbObjectVariable, ",") ^^ {
+      (relVars: List[DBObjectVariable]) => relVars map { relVar => (relVar.id, relVar) } toMap
+    }
 
   def withh =
     "with" ~> repsep(equality, "and") ^^ { (eqs: List[Equality]) => eqs }
@@ -72,40 +76,72 @@ class SchemaMappingParser extends JavaTokenParsers {
   def equality =
     qualifiedId ~ "=" ~ qualifiedId ^^ { case q1 ~ _ ~ q2 => new Equality(q1, q2) }
 
-  def relationVariable =
-    id ~ "in" ~ qualifiedId ^^ { case i ~ _ ~ q => new RelationVariable(i, q) }
+  def dbObjectVariable =
+    id ~ "in" ~ qualifiedId ^^ { case i ~ _ ~ q => new DBObjectVariable(i, q) }
 
   def qualifiedId =
-    id ~ "." ~ id ^^ { case c ~ _ ~ o => new Identifier(o, c) } |
-    id            ^^ { case o => new Identifier(o) }
+    id ~ "." ~ id ^^ { case c ~ _ ~ o => new DBObject(o, c) } |
+    id            ^^ { case o => new DBObject(o) }
 
   def id =
     ident ^^ { case s => s }
 
   //============
-  def validate(foreach: List[RelationVariable], fwhere: List[Equality],
-      exists: List[RelationVariable], ewhere: List[Equality], withh: List[Equality]) {
-    // check that given expression makes semantic sense
+
+  def validate(foreachClause: Map[String,DBObjectVariable], foreachWhereClause: List[Equality],
+      existsClause: Map[String,DBObjectVariable], existsWhereClause: List[Equality], withClause: 
+      List[Equality]) = {
+
+    for (eq <- foreachWhereClause) {
+      if (!(foreachClause contains eq.lhsObject.container))
+        throw new ParseException("alias " + eq.lhsObject.container + " not in FOREACH clause")
+      if (!(foreachClause contains eq.rhsObject.container))
+        throw new ParseException("alias " + eq.rhsObject.container + " not in FOREACH clause")
+    }
+
+    for (eq <- existsWhereClause) {
+      if (!(existsClause contains eq.lhsObject.container))
+        throw new ParseException("alias " + eq.lhsObject.container + " not in EXISTS clause")
+      if (!(existsClause contains eq.rhsObject.container))
+        throw new ParseException("alias " + eq.rhsObject.container + " not in EXISTS clause")
+    }
+
+    for (eq <- withClause) {
+      if (!(foreachClause contains eq.lhsObject.container) &&
+          !(existsClause contains eq.lhsObject.container))
+        throw new ParseException(
+            "alias " + eq.lhsObject.container + " not in FOREACH or EXISTS clauses")
+      if (!(foreachClause contains eq.rhsObject.container) &&
+          !(existsClause contains eq.rhsObject.container))
+        throw new ParseException(
+            "alias " + eq.rhsObject.container + " not in FOREACH or EXISTS clauses")
+    }
+
+    // TODO: take dbtune.metadata.Catalog as a new argument to this function and validate against it
+
+    new SchemaMapping(
+        foreachClause, foreachWhereClause,
+        existsClause, existsWhereClause, withClause)
   }
 }
 
-/** Represents an identifier, i.e. a name given to a element in a schema. This might be a column,
- * table, database or any other. Databases don't have higher-level containers. Tables are contained
- * in databases and columns are contained in tables.
+/** Represents a database object, i.e. a name given to an element in a (metadata) catalog. This
+ * might be a column, table, schema, or database. Databases don't have higher-level containers.
+ * Schemas are contained inside databases, tables within schemas and columns within tables.
  */
-class Identifier(val obj: String, val container: String) {
+class DBObject(val name: String, val container: String) {
   def this(obj: String) = this(obj, "")
 }
 
-/** An equality expression.
+/** An equality expression between two database objects.
  */
-class Equality(val id1: Identifier, val id2: Identifier) {
+class Equality(val lhsObject: DBObject, val rhsObject: DBObject) {
 }
 
-/** A relational variable, comprised of an id (the name given to the variable) and a relational
- * identifier, which in this case refers to a relation (i.e. a table)
+/** A variable (a.k.a. reference), comprised of an id (the name given to the variable) and a
+ * database object, which in this case refers to a relation (i.e. a table)
  */
-class RelationVariable(val id: String, val relation: Identifier) {
+class DBObjectVariable(val id: String, val dbObject: DBObject) {
 }
 
 /** Represents a schema mapping, i.e. the result of the parsing phase. A schema mapping is comprised
@@ -113,12 +149,17 @@ class RelationVariable(val id: String, val relation: Identifier) {
  *  - relational variables referring to the source schema.
  *  - equalities refering to the above.
  *  - relational variables referring to the target schema.
+ *  - equalities refering to the above.
  *  - equalities refering to the both source and target schemas.
  */
 class SchemaMapping(
-    val foreach: List[RelationVariable],
-    val fwhere: List[Equality],
-    val exists: List[RelationVariable],
-    val ewhere: List[Equality],
-    val withh: List[Equality]) {
+    val foreachClause: Map[String, DBObjectVariable],
+    val foreachWhereClause: List[Equality],
+    val existsClause: Map[String, DBObjectVariable],
+    val existsWhereClause: List[Equality],
+    val withClause: List[Equality]) {
+}
+
+class ParseException(message: String = null, cause: Throwable = null)
+  extends Exception(message, cause) {
 }
