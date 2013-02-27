@@ -92,6 +92,13 @@ class SchemaMappingParser extends JavaTokenParsers {
       existsClause: Map[String,DBObjectVariable], existsWhereClause: List[Equality], withClause: 
       List[Equality]) = {
 
+    // can't use the same variable twice
+
+    for (keyVal <- existsClause)
+      if (foreachClause contains keyVal._1)
+        throw new ParseException("alias " + keyVal._1 + " already in FOREACH clause")
+
+    // dbobject variables used in FOREACH's WHERE clause should be declared in the FOREACH clause
     for (eq <- foreachWhereClause) {
       if (!(foreachClause contains eq.lhsObject.container))
         throw new ParseException("alias " + eq.lhsObject.container + " not in FOREACH clause")
@@ -99,6 +106,7 @@ class SchemaMappingParser extends JavaTokenParsers {
         throw new ParseException("alias " + eq.rhsObject.container + " not in FOREACH clause")
     }
 
+    // dbobject variables used in EXISTS's WHERE clause should be declared in the EXISTS clause
     for (eq <- existsWhereClause) {
       if (!(existsClause contains eq.lhsObject.container))
         throw new ParseException("alias " + eq.lhsObject.container + " not in EXISTS clause")
@@ -106,6 +114,7 @@ class SchemaMappingParser extends JavaTokenParsers {
         throw new ParseException("alias " + eq.rhsObject.container + " not in EXISTS clause")
     }
 
+    // dbobject variables used in WITH clause should be declared in either FOREACH or EXISTS clause
     for (eq <- withClause) {
       if (!(foreachClause contains eq.lhsObject.container) &&
           !(existsClause contains eq.lhsObject.container))
@@ -136,6 +145,9 @@ class DBObject(val name: String, val container: String) {
 /** An equality expression between two database objects.
  */
 class Equality(val lhsObject: DBObject, val rhsObject: DBObject) {
+  def references(dbObject: DBObject): Boolean = {
+    ((lhsObject == dbObject) || (rhsObject == dbObject))
+  }
 }
 
 /** A variable (a.k.a. reference), comprised of an id (the name given to the variable) and a

@@ -37,7 +37,6 @@ class ExampleSuite extends FunSuite with ShouldMatchers {
   test("semantic error detection") {
     val p = new SchemaMappingParser
 
-
     // lhs foreachWhere clause
     var spec =
       """
@@ -131,6 +130,59 @@ class ExampleSuite extends FunSuite with ShouldMatchers {
       exists o in organizations, f in fundings, fn in finances
       where o.finId = f.finId
       with c.name = o.code and g.gid = d.fid and g.amount = fn.budget
+      """
+
+    intercept[ParseException] {
+      p.parseAll(p.schemaMapping, spec) match {
+        case p.Success(r,_) => r
+        case x => fail(x.toString)
+      }
+    }
+
+    // same identifier twice in foreach
+    spec =
+      """
+      foreach c in companies, c in grants
+      where c.name = c.recipient
+      exists o in organizations, f in fundings, fn in finances
+      where f.finId = fn.finId
+      with c.name = o.code and c.gid = f.fid and c.amount = fn.budget
+      """
+
+    // TODO: this should throw an exception
+    //intercept[ParseException] {
+      p.parseAll(p.schemaMapping, spec) match {
+        case p.Success(r,_) => r
+        case x => fail(x.toString)
+      }
+    //}
+
+    // same identifier twice in exists
+    spec =
+      """
+      foreach c in companies, g in grants
+      where c.name = g.recipient
+      exists o in organizations, f in fundings, o in finances
+      where f.finId = o.finId
+      with c.name = o.code and g.gid = f.fid and g.amount = o.budget
+      """
+
+    // TODO: this should throw an exception
+    //intercept[ParseException] {
+      p.parseAll(p.schemaMapping, spec) match {
+        case p.Success(r,_) => r
+        case x => fail(x.toString)
+      }
+    //}
+
+    // same alias used twice in foreach and exists
+    spec =
+      """
+      foreach c in companies, g in grants
+      where c.name = g.recipient
+      exists o in organizations, f in fundings, g in finances
+      where o.finId = f.finId
+      with c.name = o.code and g.gid = f.fid and g.amount = g.budget
       """
 
     intercept[ParseException] {
