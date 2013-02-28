@@ -57,7 +57,8 @@ class SchemaMappingParser extends JavaTokenParsers {
 
   def foreach =
     "foreach" ~> repsep(dbObjectVariable, ",") ^^ {
-      (relVars: List[DBObjectVariable]) => relVars map { relVar => (relVar.id, relVar) } toMap
+      (relVars: List[DBObjectVariable]) =>
+        relVars map { relVar => (relVar.id, relVar.dbObject) } toMap
     }
 
   def where =
@@ -65,7 +66,8 @@ class SchemaMappingParser extends JavaTokenParsers {
 
   def exists =
     "exists" ~> repsep(dbObjectVariable, ",") ^^ {
-      (relVars: List[DBObjectVariable]) => relVars map { relVar => (relVar.id, relVar) } toMap
+      (relVars: List[DBObjectVariable]) =>
+        relVars map { relVar => (relVar.id, relVar.dbObject) } toMap
     }
 
   def withh =
@@ -88,8 +90,8 @@ class SchemaMappingParser extends JavaTokenParsers {
 
   //============
 
-  def validate(foreachClause: Map[String,DBObjectVariable], foreachWhereClause: List[Equality],
-      existsClause: Map[String,DBObjectVariable], existsWhereClause: List[Equality], withClause: 
+  def validate(foreachClause: Map[String,DBObject], foreachWhereClause: List[Equality],
+      existsClause: Map[String,DBObject], existsWhereClause: List[Equality], withClause: 
       List[Equality]) = {
 
     // can't use the same variable twice
@@ -138,8 +140,17 @@ class SchemaMappingParser extends JavaTokenParsers {
  * might be a column, table, schema, or database. Databases don't have higher-level containers.
  * Schemas are contained inside databases, tables within schemas and columns within tables.
  */
-class DBObject(val name: String, val container: String) {
+class DBObject(val name: String, var container: String) {
   def this(obj: String) = this(obj, "")
+
+  override def equals(other: Any) = other match {
+    case that: DBObject => (that.name == this.name) && (that.container == this.container)
+    case _ => false
+  }
+
+  override def hashCode = { 41 * ( 41 + name.hashCode ) + container.hashCode }
+
+  override def toString = if (container == "") "" + name else container + "." + name
 }
 
 /** An equality expression between two database objects.
@@ -148,12 +159,14 @@ class Equality(val lhsObject: DBObject, val rhsObject: DBObject) {
   def references(dbObject: DBObject): Boolean = {
     ((lhsObject == dbObject) || (rhsObject == dbObject))
   }
+  // TODO: remove this and use a tuple (DBObject, DBObject)
 }
 
 /** A variable (a.k.a. reference), comprised of an id (the name given to the variable) and a
- * database object, which in this case refers to a relation (i.e. a table)
+ * database object, which usually is a relation (i.e. a table) or a column
  */
 class DBObjectVariable(val id: String, val dbObject: DBObject) {
+  // TODO: remove this and use a tuple (String, DBObject)
 }
 
 /** Represents a schema mapping, i.e. the result of the parsing phase. A schema mapping is comprised
@@ -165,9 +178,9 @@ class DBObjectVariable(val id: String, val dbObject: DBObject) {
  *  - equalities refering to the both source and target schemas.
  */
 class SchemaMapping(
-    val foreachClause: Map[String, DBObjectVariable],
+    val foreachClause: Map[String, DBObject],
     val foreachWhereClause: List[Equality],
-    val existsClause: Map[String, DBObjectVariable],
+    val existsClause: Map[String, DBObject],
     val existsWhereClause: List[Equality],
     val withClause: List[Equality]) {
 }

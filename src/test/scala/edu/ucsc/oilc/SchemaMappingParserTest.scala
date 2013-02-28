@@ -3,7 +3,7 @@ package edu.ucsc.oilc
 import org.scalatest.FunSuite
 import org.scalatest.matchers.ShouldMatchers
 
-class ExampleSuite extends FunSuite with ShouldMatchers {
+class SchemaMappingParserTest extends FunSuite with ShouldMatchers {
 
   test("basic parsing test") {
     val p = new SchemaMappingParser
@@ -25,9 +25,9 @@ class ExampleSuite extends FunSuite with ShouldMatchers {
         assert(r.withClause.size == 3)
 
         r.foreachClause should contain key ("c")
-        assert(r.foreachClause("c").dbObject.name == "companies")
+        assert(r.foreachClause("c").name == "companies")
         r.foreachClause should contain key ("g")
-        assert(r.foreachClause("g").dbObject.name == "grants")
+        assert(r.foreachClause("g").name == "grants")
         //...
       case x =>
         fail(x.toString)
@@ -192,4 +192,13 @@ class ExampleSuite extends FunSuite with ShouldMatchers {
       }
     }
   }
+
+  test("equalities and hashes") {
+    val dbo1 = new DBObject("column1", "table1")
+    val dbo2 = new DBObject("column1", "table1")
+
+    assert(dbo1 == dbo2)
+    assert(dbo1.hashCode == dbo2.hashCode)
+  }
+
 }
