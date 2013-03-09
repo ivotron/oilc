@@ -1,7 +1,8 @@
 package edu.ucsc.oilc
 
-import scalax.collection.Graph,
-       scalax.collection.GraphPredef._, scalax.collection.GraphEdge._
+import scalax.collection.mutable.Graph
+import scalax.collection.GraphPredef._, scalax.collection.GraphEdge._,
+       scalax.collection.GraphTraversal.VisitorReturn._
 import scalax.collection.edge.Implicits._
 import scalax.collection.io.dot._
 
@@ -22,8 +23,18 @@ import scalax.collection.io.dot._
 //}
 
 object QueryGraph {
+  val r = new DBObject("root")
+  val s = new DBObject("source")
+  val t = new DBObject("target")
+
+  /**
+   */
   def generateGraph (sm: SchemaMapping) = {
-    var graph = scalax.collection.mutable.Graph[DBObject, DiEdge]()
+    var graph = Graph[DBObject, DiEdge]()
+
+    graph.add(r)
+    graph.add(r ~> s)
+    graph.add(r ~> t)
 
     // for each relation referenced in the FOREACH and EXISTS clause we create a node
     //
@@ -32,23 +43,29 @@ object QueryGraph {
     sm.foreachClause.foreach {
       case(id, relation) =>
         graph.add(relation)
+        graph.add(s ~> relation)
         addColumnToRelationEdges(graph, id, relation, sm.foreachWhereClause)
         addColumnToRelationEdges(graph, id, relation, sm.withClause)
     }
     sm.existsClause.foreach {
       case(id, relation) =>
         graph.add(relation)
+        graph.add(t ~> relation)
         addColumnToRelationEdges(graph, id, relation, sm.existsWhereClause)
         addColumnToRelationEdges(graph, id, relation, sm.withClause)
     }
+
+    // add edges between source and target columns iff they're referenced in the WITH clause
     sm.withClause.foreach {
-      // we add edges between source and target columns iff they're referenced in the WITH clause
       eqCond => addColumnToColumnEdge(graph, sm.foreachClause, sm.existsClause, eqCond)
     }
+
+    // add edges between target columns iff they're referenced in the EXISTS' WHERE clause and they
+    // refer to distinct relations. This gives us referential constraints (foreign keys)
     sm.existsWhereClause.foreach {
-      // we add edges between source and target columns iff they're referenced in the WITH clause
       eqCond => addColumnToColumnBidirectionalEdges(graph, eqCond, sm.existsClause)
     }
+
     graph
   }
 
@@ -60,8 +77,9 @@ object QueryGraph {
    * object, whereas the node in the rhs of the edge (~>) is an attribute (which in turn can be a
    * parent, if we take into account nested datamodels)
    */
-  def addColumnToRelationEdges(graph: scalax.collection.mutable.Graph[DBObject, DiEdge],
-      id: String, dbObject: DBObject, eqs: List[Equality]) {
+  def addColumnToRelationEdges(
+      graph: Graph[DBObject, DiEdge], id: String, dbObject: DBObject, eqs: List[Equality])
+  {
     eqs.foreach {
       eqCond =>
         if (id == eqCond.lhsObject.container) graph.add(dbObject ~> eqCond.lhsObject)
@@ -72,8 +90,10 @@ object QueryGraph {
   /** If an equality condition relates columns from source and target (eg. c.name = o.emp_name;
    * where o is in the source or c in target (or vice-versa)), we add an edge between them
    */
-  def addColumnToColumnEdge(graph: scalax.collection.mutable.Graph[DBObject, DiEdge], foreachClause:
-      Map[String,DBObject], existsClause: Map[String,DBObject], eq: Equality) {
+  def addColumnToColumnEdge(
+      graph: Graph[DBObject, DiEdge], foreachClause: Map[String,DBObject], existsClause:
+      Map[String,DBObject], eq: Equality)
+  {
     if ((foreachClause contains eq.lhsObject.container) &&
         (existsClause contains eq.rhsObject.container)) {
       graph.add(eq.rhsObject ~> eq.lhsObject)
@@ -83,17 +103,16 @@ object QueryGraph {
     }
   }
 
-  /**
-   * adds an edge between columns of the given equality condition, as long as they refer to distinct 
-   * relations. In order to determine if the expression in an equality condition refers to different 
-   * relations, we use a map of "id->dbobject". For example:
+  /** adds an edge between columns of the given equality condition, as long as they refer to
+   * distinct relations. In order to determine if the expression in an equality condition refers to
+   * different relations, we use a map of "id->dbobject". For example:
    *
    *  c.name = o.name
    *
    * an edge is created for the above, as long as c and o refer to distinct relations
    */
-  def addColumnToColumnBidirectionalEdges(graph: scalax.collection.mutable.Graph[DBObject, DiEdge], 
-      eq: Equality, map: Map[String,DBObject])
+  def addColumnToColumnBidirectionalEdges(
+      graph: Graph[DBObject, DiEdge], eq: Equality, map: Map[String,DBObject])
   {
     (map.get(eq.lhsObject.container), map.get(eq.rhsObject.container)) match {
       case (Some(lhsObject), Some(rhsObject)) =>
@@ -106,23 +125,85 @@ object QueryGraph {
      }
   }
 
-  def toDotGraph(graph: Graph[DBObject, DiEdge]): String = {
-    val root = DotRootGraph(directed=true,id=Some("QueryGraph"),strict=true)
+  def n(g: Graph[DBObject, DiEdge], n: DBObject) = g get n
+  def tgt(g: Graph[DBObject, DiEdge]) = g get t
+  def src(g: Graph[DBObject, DiEdge]) = g get s
 
-    def edgeTransformer(innerEdge: Graph[DBObject,DiEdge]#EdgeT):
+  /** annotates a graph. First, every target node that is adjacent to a source schema node through
+   * an “equality” (dotted) edge (target-column to source-column edge), is annotated with the
+   * expression of that source schema node and only that. Next, we start propagating these
+   * expressions through the rest of the graph by invoking the `propagateAnnotations`.
+   */
+  def annotateGraph(g: Graph[DBObject, DiEdge]) {
+    (g.nodes filter (x => (x isSuccessorOf tgt(g)) && (x isSuccessorOf src(g)))).map {
+      srcNode => srcNode.inNeighbors.map {
+        z => if (z isSuccessorOf (n(g,t))) z.annotation += srcNode
+      }
+    }
+
+    propagateAnnotations(g)
+  }
+
+  /** Applies the annotation propagation rules recursively until no more propagations are done. The
+   * rules are the following:
+   * – Upward propagation: Every expression that a node acquires is propagated to its parent node,
+   *   unless the (aquiring) node is a variable.
+   * – Downward propagation: Every expression that a node acquires is propagated to its children
+   *   if they do not already have it and if they are not equal to any of the source nodes.
+   * - Eq propagation: Every expression that a node acquires is propagated to the nodes related to
+   *   it through equality edges.
+   */
+  def propagateAnnotations(g: Graph[DBObject, DiEdge]) {
+    val numOfAnnotationsBefore = numberOfAnnotations(g)
+
+    (g.nodes filter (x => (x isSuccessorOf tgt(g)) && (!(x isSuccessorOf src(g))))).map {
+      tgtNode =>
+        tgtNode.outNeighbors.map {
+          // upward: pull from children (TODO: if a variable (w.r.t annotation), then don't pull)
+          child => tgtNode.annotation ++= child.annotation
+        }
+        tgtNode.outNeighbors.map {
+          // equality and children: propagate to children only if they're not in the source schema
+          child => if (!(child isSuccessorOf (n(g,s)))) child.annotation ++= tgtNode.annotation
+        }
+    }
+
+    val numOfAnnotationsAfter = numberOfAnnotations(g)
+
+    if (numOfAnnotationsBefore != numOfAnnotationsAfter)
+      propagateAnnotations(g)
+  }
+
+  /** Counts the number of annotations in the graph
+   */
+  def numberOfAnnotations(g: Graph[DBObject, DiEdge]) = {
+    var numOfAnnotations = 0
+
+    def count(node: g.NodeT) = {
+      numOfAnnotations += node.annotation.size
+      Continue
+    }
+
+    g.get(r).traverseNodes() {count}
+
+    numOfAnnotations
+  }
+
+  /**
+   * writes to dot format
+   */
+  def toDotGraph(g: scalax.collection.Graph[DBObject, DiEdge]): String =
+  {
+    val dotRoot = DotRootGraph(directed=true,id=Some("QueryGraph"))
+
+    def edgeTransformer(innerEdge: scalax.collection.Graph[DBObject,DiEdge]#EdgeT):
         Option[(DotGraph, DotEdgeStmt)] = {
       val edge = innerEdge.edge
-      val labelList = List(DotAttr("l", " ")) // edge.label.asInstanceOf[DBObject]
+      val labelList = List() // edge.label.asInstanceOf[DBObject]
 
-      Some(root, DotEdgeStmt(edge.from.toString, edge.to.toString, labelList))
+      Some(dotRoot, DotEdgeStmt(edge.from.toString, edge.to.toString, labelList))
     }
 
-    def iNodeTransformer(innerNode: Graph[DBObject,DiEdge]#NodeT):
-        Option[(DotGraph, DotNodeStmt)] = {
-      println("transforming node " + innerNode.toString)
-      Some(root, DotNodeStmt(innerNode.toString, Seq.empty[DotAttr]))
-    }
-
-    graph.toDot(root, edgeTransformer, Some(iNodeTransformer))
+    g.toDot(dotRoot, edgeTransformer)
   }
 }

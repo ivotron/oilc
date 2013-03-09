@@ -140,8 +140,9 @@ class SchemaMappingParser extends JavaTokenParsers {
  * might be a column, table, schema, or database. Databases don't have higher-level containers.
  * Schemas are contained inside databases, tables within schemas and columns within tables.
  */
-class DBObject(val name: String, var container: String) {
-  def this(obj: String) = this(obj, "")
+class DBObject(val name: String, var container: String, var annotation: Set[DBObject]) {
+  def this(obj: String, container: String) = this(obj, container, Set[DBObject]())
+  def this(obj: String) = this(obj, "", Set[DBObject]())
 
   override def equals(other: Any) = other match {
     case that: DBObject => (that.name == this.name) && (that.container == this.container)
@@ -150,7 +151,13 @@ class DBObject(val name: String, var container: String) {
 
   override def hashCode = { 41 * ( 41 + name.hashCode ) + container.hashCode }
 
-  override def toString = if (container == "") "" + name else container + "." + name
+  override def toString = {
+    var str = if (container == "") "" + name else container + "." + name
+    if(annotation.size != 0) str += "(" + annotation + ")"
+    //annotation.map { x => if(x == this) str += "self," else x.toString }
+    //str += ")"
+    str
+  }
 }
 
 /** An equality expression between two database objects.
