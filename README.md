@@ -1,4 +1,5 @@
-oilc
+OilC
 ====
 
-Schema mappings over big data high-level languages
+Schema mappings open source library.
+
