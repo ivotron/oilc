@@ -128,6 +128,8 @@ object QueryGraph {
   def n(g: Graph[DBObject, DiEdge], n: DBObject) = g get n
   def tgt(g: Graph[DBObject, DiEdge]) = g get t
   def src(g: Graph[DBObject, DiEdge]) = g get s
+  def targetNode(g: Graph[DBObject, DiEdge]) = g get t
+  def sourceNode(g: Graph[DBObject, DiEdge]) = g get s
 
   /** annotates a graph. First, every target node that is adjacent to a source schema node through
    * an “equality” (dotted) edge (target-column to source-column edge), is annotated with the

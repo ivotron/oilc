@@ -154,10 +154,10 @@ class DBObject(val name: String, var container: String, var annotation: Set[DBOb
   override def toString = {
     var str = if (container == "") "" + name else container + "." + name
     if(annotation.size != 0) str += "(" + annotation + ")"
-    //annotation.map { x => if(x == this) str += "self," else x.toString }
-    //str += ")"
     str
   }
+
+  def toStringWithoutAnnotation = if (container == "") "" + name else container + "." + name
 }
 
 /** An equality expression between two database objects.
@@ -194,4 +194,18 @@ class SchemaMapping(
 
 class ParseException(message: String = null, cause: Throwable = null)
   extends Exception(message, cause) {
+}
+
+object SchemaMappingParser {
+  def parse(spec: String) = {
+
+    val p = new SchemaMappingParser
+
+    p.parseAll(p.schemaMapping, spec) match {
+      case p.Success(r,_) =>
+        r
+      case x =>
+        throw new RuntimeException(x.toString)
+    }
+  }
 }
